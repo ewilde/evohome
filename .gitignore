@@ -1,0 +1,16 @@
+*.dll
+*.exe
+.DS_Store
+*.log
+*.bak
+*~
+.*.swp
+.idea
+*.iml
+*.test
+*.iml
+
+# Keep windows files with windows line endings
+*.winfile eol=crlf
+/.vs
+dist/

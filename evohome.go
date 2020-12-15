@@ -6,8 +6,9 @@ import (
     "errors"
     "fmt"
     "io"
+    "log"
     "net/http"
-    // "net/http/httputil"
+    "net/http/httputil"
     "net/url"
     // "strings"
     "time"
@@ -22,13 +23,13 @@ const (
 )
 
 type Evohome struct {
-    initialized bool
-    account Account
+    initialized   bool
+    account       Account
     installations []Installation
 }
 
 // Create new Evohome instance.
-func NewEvohome(username string, password string) (*Evohome) {
+func NewEvohome(username string, password string) *Evohome {
     var err error
     accessToken, refreshToken, err = tokens(username, password)
     if err != nil {
@@ -40,66 +41,79 @@ func NewEvohome(username string, password string) (*Evohome) {
         account: account(),
     }
 
-    e.installations = installations(e.account.UserId)
-    go e.UpdateTemperatures()
-    go e.UpdateSchedules()
+    e.installations = *installations(e.account.UserId)
     return e
 }
 
 // Update zone temperatures
 func (e *Evohome) UpdateTemperatures() () {
-    for {
-        zones := e.TemperatureControlSystem().Zones
-        zoneTemperatures := zoneTemperatures(e.installations[0].Location.Id)
+    for i, install := range e.installations {
+        zones := install.Gateways[0].TemperatureControlSystems[0].Zones
+        zoneTemperatures := e.getZoneStatusIncludingTemperature(e.installations[i].Location.Id)
 
         // Merge zone temperatures into Zone objects
         for i, outerZone := range zones {
             for _, innerZone := range zoneTemperatures {
                 if outerZone.Id == innerZone.Id {
+                    zones[i].TemperatureStatus = &TemperatureStatus{}
                     zones[i].TemperatureStatus.IsAvailable = innerZone.TemperatureStatus.IsAvailable
                     zones[i].TemperatureStatus.Temperature = innerZone.TemperatureStatus.Temperature
+
+                    zones[i].HeatSetPointStatus = &HeatSetPointStatus{}
                     zones[i].HeatSetPointStatus.TargetTemperature = innerZone.HeatSetPointStatus.TargetTemperature
                     zones[i].HeatSetPointStatus.SetPointMode = innerZone.HeatSetPointStatus.SetPointMode
                     break
                 }
             }
         }
-        time.Sleep(temperatureRefreshInterval)
+
+        install.Gateways[0].TemperatureControlSystems[0].Zones = zones
     }
+}
+
+// Update schedules and temperatures
+func (e *Evohome) Update () {
+    e.UpdateSchedules()
+    e.UpdateTemperatures()
 }
 
 // Update zone schedules
 func (e *Evohome) UpdateSchedules() () {
-    zones := e.TemperatureControlSystem().Zones
-
-    for {
-        // Retrieve schedules and merge data structure into Zone object
-        for i, zone := range zones {
-            zones[i].Schedules = zoneSchedules(zone)
-        }
-        time.Sleep(scheduleRefreshInterval)
-    }
+   for _, install := range e.installations {
+       // Retrieve schedules and merge data structure into Zone object
+       for i, zone := range install.Gateways[0].TemperatureControlSystems[0].Zones {
+           install.Gateways[0].TemperatureControlSystems[0].Zones[i].Schedules = zoneSchedules(zone)
+       }
+   }
 }
 
-func (e *Evohome) Initialized() (bool) {
+func (e *Evohome) Initialized() bool {
     return e.initialized
 }
 
-func (e *Evohome) Account() (Account) {
+func (e *Evohome) Account() Account {
     return e.account
 }
 
-// Try to retrieve the first registered temperature control system.
-func (e *Evohome) TemperatureControlSystem() (TemperatureControlSystem) {
-    if !e.Initialized() {
+func (e *Evohome) Installations() []Installation {
+    return e.installations
+}
+
+func (e *Evohome) TemperatureControlSystemByIndex(index int) *TemperatureControlSystem {
+    if !e.initialized {
         panic("Evohome not initialized")
     }
     if len(e.installations) == 0 ||
-            len(e.installations[0].Gateways) == 0 ||
-            len(e.installations[0].Gateways[0].TemperatureControlSystems) == 0 {
+        len(e.installations[index].Gateways) == 0 ||
+        len(e.installations[index].Gateways[0].TemperatureControlSystems) == 0 {
         panic("Cannot retrieve temperature control system")
     }
-    return e.installations[0].Gateways[0].TemperatureControlSystems[0]
+    return &e.installations[index].Gateways[0].TemperatureControlSystems[0]
+}
+
+// Try to retrieve the first registered temperature control system.
+func (e *Evohome) TemperatureControlSystem() *TemperatureControlSystem {
+    return e.TemperatureControlSystemByIndex(0)
 }
 
 func tokens(username string, password string) (accessToken string, refreshToken string, err error) {
@@ -163,11 +177,12 @@ func request(requestType string, data io.Reader, path string, pathVars ...interf
         return responseBody, err
     }
     if resp.StatusCode >= 400 {
+        b, _ := httputil.DumpResponse(resp, true)
+        log.Println(string(b))
         return responseBody, errors.New(
             fmt.Sprintf("Invalid request; status code '%d' for request to '%s'",
                 resp.StatusCode, fmt.Sprintf(url, pathVars...)))
     }
-
     // reqDump, _ := httputil.DumpRequest(req, true)
     // fmt.Printf("request: %q\n", reqDump)
 
@@ -191,7 +206,7 @@ func account() (Account) {
     return acc
 }
 
-func installations(userId string) ([]Installation) {
+func installations(userId string) *[]Installation {
     body, err := request("GET", nil,
             "location/installationInfo?userId=%s&includeTemperatureControlSystems=True", userId)
     if err != nil {
@@ -205,13 +220,27 @@ func installations(userId string) ([]Installation) {
     }
 
     defer body.Close()
-    return installations
+
+    for _, install := range installations {
+        zones := install.Gateways[0].TemperatureControlSystems[0].Zones
+        var newZones []Zone
+        for _, zone := range zones {
+            if zone.ModelType != "Unknown" {
+                newZones = append(newZones, zone)
+            }
+        }
+
+        install.Gateways[0].TemperatureControlSystems[0].Zones = newZones
+    }
+
+    return &installations
 }
 
-func zoneSchedules(zone Zone) (ZoneSchedule) {
+func zoneSchedules(zone Zone) *ZoneSchedule {
     body, err := request("GET", nil, "%s/%s/schedule", "temperatureZone", zone.Id) // FIXME
     if err != nil {
-        panic(err)
+        log.Println(err)
+        return nil
     }
 
     var schedule ZoneSchedule
@@ -221,10 +250,10 @@ func zoneSchedules(zone Zone) (ZoneSchedule) {
     }
 
     defer body.Close()
-    return schedule
+    return &schedule
 }
 
-func zoneTemperatures(locationId string) ([]Zone) {
+func (e *Evohome) getZoneStatusIncludingTemperature(locationId string) ([]Zone) {
     body, err := request("GET", nil,
             "location/%s/status?includeTemperatureControlSystems=True", locationId)
     if err != nil {
@@ -239,4 +268,10 @@ func zoneTemperatures(locationId string) ([]Zone) {
 
     defer body.Close()
     return installation.Gateways[0].TemperatureControlSystems[0].Zones
+}
+
+func removeZone(s []Zone, i int) []Zone {
+    s[i] = s[len(s)-1]
+    // We do not need to put s[i] at the end, as it will be discarded anyway
+    return s[:len(s)-1]
 }

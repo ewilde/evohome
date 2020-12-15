@@ -8,13 +8,13 @@ import (
 )
 
 type Zone struct {
-    Id string                             `json:"zoneId"`
-    Name string                           `json:"name"`
-    ModelType string                      `json:"modelType"`
-    ZoneType string                       `json:"zoneType"`
-    TemperatureStatus TemperatureStatus   `json:"temperatureStatus"`
-    HeatSetPointStatus HeatSetPointStatus `json:"heatSetpointStatus"`
-    Schedules ZoneSchedule                `json:"dailySchedules"`
+    Id string                              `json:"zoneId"`
+    Name string                            `json:"name"`
+    ModelType string                       `json:"modelType"`
+    ZoneType string                        `json:"zoneType"`
+    TemperatureStatus *TemperatureStatus   `json:"temperatureStatus"`
+    HeatSetPointStatus *HeatSetPointStatus `json:"heatSetpointStatus"`
+    Schedules *ZoneSchedule                `json:"dailySchedules"`
 }
 
 type ZoneTemperatureSetting struct {
