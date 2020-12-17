@@ -3,12 +3,15 @@ package evohome
 import (
 	"os"
 	"testing"
+	"time"
 )
 
-
-
 func TestNewEvohome(t *testing.T) {
-	client := getClient()
+	client, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if client == nil {
 		t.Fatal("Client is nil")
 	}
@@ -20,7 +23,11 @@ func TestNewEvohome(t *testing.T) {
 
 
 func TestEvohome_TemperatureControlSystem(t *testing.T) {
-	client := getClient()
+	client, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	system := client.TemperatureControlSystem()
 	if system == nil {
 		t.Fatal("Control system is nil")
@@ -28,7 +35,11 @@ func TestEvohome_TemperatureControlSystem(t *testing.T) {
 }
 
 func TestEvohome_TemperatureControlSystemByIndex(t *testing.T) {
-	client := getClient()
+	client, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	system := client.TemperatureControlSystemByIndex(1)
 	if system == nil {
 		t.Fatal("Control system is nil")
@@ -36,7 +47,11 @@ func TestEvohome_TemperatureControlSystemByIndex(t *testing.T) {
 }
 
 func TestEvoHome_getZoneStatusIncludingTemperature(t *testing.T) {
-	client := getClient()
+	client, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	locationID := client.Installations()[0].Location.Id
 	zones := client.getZoneStatusIncludingTemperature(locationID)
 
@@ -46,7 +61,10 @@ func TestEvoHome_getZoneStatusIncludingTemperature(t *testing.T) {
 }
 
 func TestEvohome_UpdateTemperatures(t *testing.T) {
-	client := getClient()
+	client, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	zoneTempsBefore := map[string]map[string]float32{}
 	for _, install := range client.Installations() {
@@ -71,7 +89,10 @@ func TestEvohome_UpdateTemperatures(t *testing.T) {
 }
 
 func TestEvohome_UpdateSchedules(t *testing.T) {
-	client := getClient()
+	client, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	client.UpdateSchedules()
 
@@ -85,7 +106,10 @@ func TestEvohome_UpdateSchedules(t *testing.T) {
 }
 
 func TestEvohome_Update(t *testing.T) {
-	client := getClient()
+	client, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	zoneTempsBefore := map[string]map[string]float32{}
 	for _, install := range client.Installations() {
@@ -113,7 +137,17 @@ func TestEvohome_Update(t *testing.T) {
 	}
 }
 
-func getClient() *Evohome {
+func TestRequireAuthentication(t *testing.T) {
+	if !requireAuthentication(time.Now()) {
+		t.Error("should have required authentication")
+	}
+
+	if requireAuthentication(time.Now().Add(time.Duration(100) * time.Second)) {
+		t.Error("should not have required authentication")
+	}
+}
+
+func getClient() (*Evohome, error) {
 	username, password := getCredentials()
 	return NewEvohome(username,password)
 }

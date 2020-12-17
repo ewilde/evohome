@@ -16,10 +16,10 @@ import (
 
 var accessToken string
 var refreshToken string
+var expires = time.Now()
 
 const (
-    scheduleRefreshInterval time.Duration = 5 * time.Second
-    temperatureRefreshInterval time.Duration = 2 * time.Second
+    waitInterval time.Duration = 5 * time.Second
 )
 
 type Evohome struct {
@@ -29,11 +29,25 @@ type Evohome struct {
 }
 
 // Create new Evohome instance.
-func NewEvohome(username string, password string) *Evohome {
+func NewEvohome(username string, password string) (*Evohome, error) {
+    if len(username) == 0 {
+        return nil, errors.New("username supplied was an empty string")
+    }
+
+    if len(password) == 0 {
+        return nil, errors.New("password supplied was an empty string")
+    }
+
     var err error
-    accessToken, refreshToken, err = tokens(username, password)
+
+    if requireAuthentication(expires) {
+        var expiresInSeconds float64
+        accessToken, refreshToken, expiresInSeconds, err = tokens(username, password)
+        expires = time.Now().Add(time.Second * time.Duration(expiresInSeconds))
+    }
+
     if err != nil {
-        return nil
+        return nil, err
     }
 
     e := &Evohome {
@@ -42,7 +56,17 @@ func NewEvohome(username string, password string) *Evohome {
     }
 
     e.installations = *installations(e.account.UserId)
-    return e
+    return e, nil
+}
+
+func requireAuthentication(expiryTime time.Time) bool {
+    currentTime := time.Now()
+    if expiryTime.Add(time.Duration(-1) * time.Second).Before(currentTime) {
+        log.Printf("%v is before current time %v\n", expiryTime, currentTime)
+        return true
+    }
+
+    return false
 }
 
 // Update zone temperatures
@@ -116,7 +140,7 @@ func (e *Evohome) TemperatureControlSystem() *TemperatureControlSystem {
     return e.TemperatureControlSystemByIndex(0)
 }
 
-func tokens(username string, password string) (accessToken string, refreshToken string, err error) {
+func tokens(username string, password string) (accessToken string, refreshToken string, expiresIn float64, err error) {
     data := url.Values{
         "Content-Type":     { "application/x-www-form-urlencoded; charset=utf-8'" },
         "Host":             { "rs.alarmnet.com/" },
@@ -134,11 +158,16 @@ func tokens(username string, password string) (accessToken string, refreshToken 
     req.Header.Set("Authorization", "Basic YjAxM2FhMjYtOTcyNC00ZGJkLTg4OTctMDQ4YjlhYWRhMjQ5OnRlc3Q=")
 
     resp, err := http.DefaultClient.Do(req)
+    defer resp.Body.Close()
+
     if err != nil {
         panic(err)
     }
 
-    defer resp.Body.Close()
+    if resp.StatusCode >= 400 {
+        output, _ := httputil.DumpResponse(resp, true)
+        return "", "", 0, errors.New(string(output))
+    }
 
     var respData = make(map[string]interface{})
     err = json.NewDecoder(resp.Body).Decode(&respData)
@@ -148,13 +177,16 @@ func tokens(username string, password string) (accessToken string, refreshToken 
 
     var ok bool
     if accessToken, ok = respData["access_token"].(string); !ok {
-        err = errors.New("Could not retrieve token(s)")
+        err = errors.New("could not retrieve access token(s)")
     }
     if refreshToken, ok = respData["refresh_token"].(string); !ok {
-        err = errors.New("Could not retrieve token(s)")
+        err = errors.New("could not retrieve refresh token(s)")
+    }
+    if expiresIn, ok = respData["expires_in"].(float64); !ok {
+        err = errors.New("could not retrieve expires in token(s)")
     }
 
-    return accessToken, refreshToken, err
+    return accessToken, refreshToken, expiresIn, err
 }
 
 func request(requestType string, data io.Reader, path string, pathVars ...interface{}) (responseBody io.ReadCloser, err error) {
@@ -174,19 +206,16 @@ func request(requestType string, data io.Reader, path string, pathVars ...interf
 
     resp, err := http.DefaultClient.Do(req)
     if err != nil {
-        return responseBody, err
+        return nil, err
     }
     if resp.StatusCode >= 400 {
         b, _ := httputil.DumpResponse(resp, true)
         log.Println(string(b))
-        return responseBody, errors.New(
+        return nil, errors.New(
             fmt.Sprintf("Invalid request; status code '%d' for request to '%s'",
                 resp.StatusCode, fmt.Sprintf(url, pathVars...)))
     }
-    // reqDump, _ := httputil.DumpRequest(req, true)
-    // fmt.Printf("request: %q\n", reqDump)
 
-    // defer resp.Body.Close()
     return resp.Body, err
 }
 
